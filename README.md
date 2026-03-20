@@ -14,9 +14,10 @@
 5. [Weekly Premium Model](#5-weekly-premium-model)
 6. [Parametric Triggers](#6-parametric-triggers)
 7. [AI/ML Integration Plan](#7-aiml-integration-plan)
-8. [Platform Choice — Web App](#8-platform-choice--web-app)
-9. [Tech Stack](#9-tech-stack)
-10. [Development Plan](#10-development-plan)
+8. [Adversarial Defense & Anti-Spoofing Strategy](#8-adversarial-defense--anti-spoofing-strategy)
+9. [Platform Choice — Web App](#9-platform-choice--web-app)
+10. [Tech Stack](#10-tech-stack)
+11. [Development Plan](#11-development-plan)
 
 ---
 
@@ -360,7 +361,260 @@ All triggers are objective, third-party verifiable, and require no manual claim 
 
 ---
 
-## 8. Platform Choice — Web App
+## 8. Adversarial Defense & Anti-Spoofing Strategy
+
+Allievo's zero-touch payout model is only trustworthy if the system is robust against deliberate manipulation. Because payouts are automatic, a naive implementation would be vulnerable to location spoofing, synthetic claim rings, and opportunistic fraud. This section describes how Allievo defends against adversarial actors at three levels: individual differentiation, coordinated ring detection, and fair treatment of legitimate edge cases.
+
+---
+
+### 8.1 Differentiating a Genuine Stranded Worker from a GPS Spoofer
+
+The core challenge is that a bad actor and a genuinely stranded worker will look identical on a single dimension — both register a GPS coordinate inside the disrupted zone. Allievo defeats this by requiring **multi-signal coherence**: a genuine worker's full behavioral fingerprint must be consistent with their location claim, not just their GPS coordinate.
+
+#### Signal Layer 1 — Behavioral Trajectory Consistency
+
+GPS spoofing tools inject static or scripted coordinates. They cannot replicate the natural, physics-consistent movement of a real delivery worker. Allievo analyzes GPS ping history for the 90 minutes preceding a disruption event and applies the following checks:
+
+```
+Trajectory Checks:
+  ✓ Speed continuity:   No teleportation between pings (Δdistance / Δtime within physical limits)
+  ✓ Micro-drift:        Real devices show ±3–8m natural GPS drift; perfect static coordinates are suspect
+  ✓ Path plausibility:  Movement path matches known road geometry (validated against OSM road network)
+  ✓ Arrival vector:     Worker was moving toward the zone, not suddenly "in" it at trigger time
+```
+
+A spoofed coordinate typically appears instantaneously in the zone with no prior trajectory, or shows movement that violates road geometry (e.g., cutting across a lake). These are hard physical flags.
+
+#### Signal Layer 2 — Platform Activity Correlation
+
+Every genuine delivery worker interacting with Zomato or Swiggy produces a stream of platform-side events: order pings received, orders accepted or declined, pickup confirmations, delivery completions. Allievo cross-references this event stream against the GPS claim:
+
+```
+Platform Correlation Checks:
+  ✓ Order ping receipt:     Was the worker receiving order notifications from the zone's restaurant cluster?
+  ✓ Last accepted order:    GPS of last pickup point must be within or adjacent to the claimed zone
+  ✓ Order acceptance rate:  Workers mid-shift show natural accept/decline patterns; idle accounts don't
+  ✓ App session continuity: Platform app must show an active session — not a background token only
+```
+
+A spoofed account that has not accepted a single order in the disrupted zone for the prior 2 hours will fail this check even if their GPS is correctly placed.
+
+#### Signal Layer 3 — Device Fingerprint Integrity
+
+Allievo collects a device fingerprint at onboarding and on each app open. The fingerprint includes:
+
+```
+Device Fingerprint Components:
+  - Hardware ID (Android Device ID / IMEI hash)
+  - SIM card carrier and cell tower registration (cross-checks physical location independently of GPS)
+  - Accelerometer & gyroscope motion signature (real workers show constant vibration from road movement)
+  - Network SSID history (a stationary worker at home will connect to a known home Wi-Fi, not tower pings from the zone)
+  - Battery drain rate (active delivery workers show higher drain than idle devices)
+```
+
+The **cell tower cross-check** is particularly powerful: GPS can be spoofed, but a device's registered cell tower at the time of the disruption provides an independent, hardware-level location signal that cannot be faked by a GPS mock app. If the cell tower and GPS disagree by more than 500m, the claim is flagged.
+
+#### Differentiation Decision Matrix
+
+```
+Signal                        | Genuine Worker        | GPS Spoofer
+------------------------------|------------------------|------------------------
+GPS trajectory pre-disruption | Natural road path      | Teleport / static jump
+Cell tower location           | Matches GPS            | Mismatches GPS
+Platform order activity       | Active last 60–90 min  | No recent activity
+Micro-GPS drift               | Natural ±3–8m          | Suspiciously perfect
+Accelerometer pattern         | Road vibration present | Flat / no motion
+Device fingerprint            | Matches onboarding     | New or altered device
+```
+
+A genuine worker scores coherently across all signals. A spoofer will typically fail 2–3 of these checks simultaneously, which triggers the fraud pipeline regardless of their GPS accuracy.
+
+---
+
+### 8.2 Detecting Coordinated Fraud Rings
+
+Individual fraud is manageable. Coordinated rings — where multiple fake accounts simultaneously claim a disruption — pose a systemic risk. Allievo uses a dedicated **Ring Detection Engine** that monitors cross-account patterns in real time during each disruption event.
+
+#### Data Points Analyzed for Ring Detection
+
+Beyond basic GPS, Allievo ingests the following cross-account signals during any active disruption event:
+
+**1. Device Sharing Graph**
+A legitimate delivery worker has one device. Fraud rings typically operate clusters of fake accounts from a small number of physical devices (phones with GPS mock apps). Allievo builds a device-sharing graph: if three policy accounts share the same hardware ID at any point in the prior 30 days, they are linked. During a disruption, a payout to one node in a linked cluster triggers a hold on all linked accounts pending review.
+
+**2. UPI Destination Clustering**
+Payouts ultimately land in UPI accounts. Allievo analyzes the graph of UPI destination accounts and checks for:
+```
+  - Multiple Allievo accounts mapping to the same UPI VPA
+  - UPI accounts receiving payouts that are immediately forwarded to a common third account
+  - New UPI registrations within 48 hours of a disruption event
+```
+A fraud ring typically funnels payouts to a single controller account. This graph structure is detectable even when individual accounts appear clean.
+
+**3. Temporal Claim Clustering**
+During genuine disruptions, claims arrive continuously over the disruption window as different workers' app sessions update. Coordinated fraud rings tend to trigger all their claims within a narrow time window — often within minutes of the disruption being confirmed — because the ring operator fires all accounts simultaneously.
+
+```
+Ring Detection Signal:
+  Genuine disruption:   Claims arrive distributed over 30–90 minutes
+  Fraud ring pattern:   ≥ 5 claims from different accounts within a 3-minute window,
+                        all with GPS pings that appeared in the zone within the last 15 minutes
+```
+
+This "claim burst" pattern combined with fresh GPS registrations is a strong ring indicator.
+
+**4. Social Graph & Referral Chain Analysis**
+Allievo tracks how workers were onboarded. A fraud ring often recruits through a single referral chain (one person onboards 10+ accounts). If 8 accounts in the same referral subtree claim the same disruption event, the probability of coordinated fraud is very high. Allievo applies a multiplier to the fraud score for accounts with deep referral chain overlap.
+
+**5. Historical Zone Presence vs. Zone Claim**
+Allievo maintains a 30-day rolling log of each worker's active zones derived from platform activity (not self-reported). A worker who has never previously accepted an order in a zone — but claims to have been working there during a disruption — receives a significantly elevated fraud score regardless of their GPS position on the day.
+
+```
+Zone Presence Score = (Days active in claimed zone in last 30 days) / 30
+
+Score < 0.1 (worked in zone < 3 days of last 30):  High suspicion flag
+Score > 0.5 (worked in zone ≥ 15 days of last 30): Credibility boost
+```
+
+#### Ring Detection Summary
+
+```
+Ring Detection Signals:
+  ✓ Device-sharing graph (shared hardware IDs across accounts)
+  ✓ UPI destination clustering (payouts funneling to common accounts)
+  ✓ Temporal claim bursting (coordinated simultaneous submissions)
+  ✓ Referral chain overlap (accounts onboarded through same recruiter chain)
+  ✓ Historical zone absence (claimed zone with no prior platform activity)
+  ✓ Cross-account GPS proximity (10+ accounts reporting identical coordinates)
+```
+
+When 3 or more ring signals fire simultaneously, Allievo escalates from automated hold to a **Ring Alert**, which pauses all payouts in that cluster and notifies the human review team for same-day resolution.
+
+---
+
+### 8.3 Handling Flagged Claims Without Penalizing Honest Workers
+
+This is the most critical UX challenge in Allievo's design. Heavy rain, poor network, and GPS signal degradation happen to honest workers simultaneously — exactly when they need coverage most. A system that flags too aggressively punishes the people it was built to protect.
+
+Allievo's approach is built on three principles: **assume innocence first, pay what is unambiguous immediately, resolve disputes fast**.
+
+#### The Tiered Payout Architecture
+
+Rather than binary approve/hold, Allievo uses a three-tier response system:
+
+```
+Fraud Score  | Action                           | Worker Experience
+-------------|----------------------------------|------------------------------------------
+0.0 – 0.30   | Auto-approve                     | Payout within 10 minutes, no friction
+0.31 – 0.55  | Soft flag — Partial Pay          | 60% payout immediately; remaining 40%
+             |                                  | held for 24-hour passive review
+0.56 – 0.70  | Hard flag — Full Hold            | No payout; worker notified with reason
+             |                                  | category; 48-hour resolution window
+0.71 – 1.0   | Fraud block — Manual Review      | Claim held; human review within 4 hours
+             |                                  | during business hours
+```
+
+The **partial pay model** (Soft Flag band) is the most important design decision for fairness. A worker with a mildly elevated fraud score — perhaps because their GPS signal was unstable during the rain — still receives the majority of their payout immediately. The 40% hold is released automatically after 24 hours if no additional fraud signals emerge, without requiring any action from the worker.
+
+#### The Network Drop Grace Period
+
+GPS signal degradation in heavy rain is a well-documented phenomenon in urban India. Allievo's fraud model explicitly accounts for this:
+
+```
+Network Drop Accommodation:
+  - If a worker's GPS pings become sparse or absent during the disruption window,
+    the system does NOT treat absence of GPS data as evidence of fraud.
+  - Instead, last-known-position is extended for up to 45 minutes with a
+    "signal gap" flag — not a fraud flag.
+  - The system cross-checks cell tower data during the gap. If tower data
+    confirms the worker remained in the zone, the claim proceeds normally.
+  - Only if both GPS AND cell tower data are absent simultaneously (very rare)
+    does the system move to the Soft Flag tier.
+```
+
+This means a worker whose phone GPS dropped during a monsoon storm — exactly when they need the insurance — is protected by the cell tower fallback rather than penalized.
+
+#### The Worker-Facing Explanation System
+
+When a claim is flagged (any tier above auto-approve), the worker receives a transparent notification explaining the specific reason in plain language. Allievo never says "your claim is under review" without context. Instead:
+
+```
+Example Soft Flag notification (in Hindi/Telugu/English based on language preference):
+
+  "Your payout for [disruption event] on [date] is being processed.
+   ₹180 has been sent to your UPI now.
+   The remaining ₹120 will be released within 24 hours.
+
+   Reason for delay: Your location data was intermittent during the storm.
+   No action needed from you — this resolves automatically."
+```
+
+For Hard Flag and above, the worker receives a simple one-question appeal option: "Were you working in [Zone Name] on [Date]?" with a Yes/No and an optional 100-character text note. This is intentionally minimal — not a document upload, not a form — because requiring complex documentation from a gig worker during or after a disruption is the primary failure mode of traditional insurance.
+
+#### The Honest Worker Protection Guarantee
+
+Allievo commits to the following SLAs for flagged legitimate claims:
+
+```
+Protection SLAs:
+  - Soft flag (0.31–0.55): 100% of payout released within 24 hours if no new fraud signals
+  - Hard flag (0.56–0.70): Human review within 48 hours; payout released same day if cleared
+  - False positive rate target: < 3% of all claims flagged incorrectly
+  - Repeat false positive: If a worker is incorrectly flagged twice in 90 days,
+    their fraud score baseline is adjusted downward permanently
+```
+
+The **repeat false positive adjustment** is especially important for fairness. A worker who keeps getting flagged incorrectly — perhaps because they operate in a zone with poor network coverage — has their baseline recalibrated so the model learns their legitimate behavioral pattern rather than continuing to flag them.
+
+#### Flagged Claim Flow Summary
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                 DISRUPTION DETECTED IN ZONE                   │
+└──────────────────────────┬───────────────────────────────────┘
+                           │
+                           ▼
+              Multi-Signal Fraud Score Computed
+              (GPS + Cell Tower + Platform Activity
+               + Device Fingerprint + Ring Signals)
+                           │
+            ┌──────────────┼──────────────┐
+            │              │              │
+         0–0.30         0.31–0.55      0.56–1.0
+            │              │              │
+            ▼              ▼              ▼
+       Auto-Pay        Partial Pay    Full Hold
+      (10 min)        60% now +      Worker notified
+                      40% in 24hr    + Appeal option
+                      (auto-release   + Human review
+                       if no new       48hr SLA
+                       signals)
+                           │
+                     Worker Notified
+                   (plain language,
+                    no jargon,
+                    no forms)
+```
+
+---
+
+### 8.4 Anti-Spoofing: Technical Implementation Notes
+
+| Component                  | Technology / Approach                                    |
+|----------------------------|----------------------------------------------------------|
+| GPS trajectory analysis    | PostGIS spatial queries on ping history table            |
+| Cell tower cross-check     | Android Network Location API (passive, no user action)   |
+| Device fingerprinting      | FingerprintJS Pro (hashed, no PII stored)                |
+| Accelerometer sampling     | Background service, 1 sample/min during active session   |
+| Platform event stream      | Mock REST API (Phase 1); real OAuth integration (Phase 2)|
+| Device-sharing graph       | Graph DB (Neo4j) or adjacency table in PostgreSQL        |
+| UPI clustering analysis    | Batch job run post-disruption, flags before payout batch |
+| Ring detection engine      | Python service (Celery worker), fires within 5 min of trigger |
+| Partial payout release     | Scheduled Celery task with 24hr timer, auto-cancels on new signal |
+
+---
+
+## 9. Platform Choice — Web App
 
 We have chosen to build Allievo as a **web application** (React frontend + FastAPI backend) for the following reasons:
 
@@ -374,7 +628,7 @@ The UI will be fully responsive and optimized for mobile screens (320px–480px)
 
 ---
 
-## 9. Tech Stack
+## 10. Tech Stack
 
 ### Frontend
 | Layer        | Technology          | Reason                                        |
@@ -403,7 +657,8 @@ The UI will be fully responsive and optimized for mobile screens (320px–480px)
 ### Database
 | Layer        | Technology          | Reason                                        |
 |--------------|---------------------|-----------------------------------------------|
-| Primary DB   | PostgreSQL          | Relational, reliable, good for financial data |
+| Primary DB   | PostgreSQL + PostGIS| Relational + spatial queries for GPS analysis |
+| Graph DB     | PostgreSQL adjacency table (Phase 1) / Neo4j (Phase 2) | Device-sharing and ring detection graphs |
 | Cache        | Redis               | Session storage, API response caching         |
 | ORM          | SQLAlchemy          | Clean DB access layer                         |
 
@@ -415,6 +670,8 @@ The UI will be fully responsive and optimized for mobile screens (320px–480px)
 | Payment      | Razorpay test mode  | Simulated UPI payout processing               |
 | Platform     | Mock REST API       | Simulated Zomato/Swiggy order data            |
 | Alerts       | Mock govt feed      | Curfew/bandh event simulation                 |
+| Cell Tower   | Android Network Location API | Independent location cross-check    |
+| Device FP    | FingerprintJS Pro   | Hardware fingerprinting for spoofing defense  |
 
 ### Infrastructure
 | Layer        | Technology          | Reason                                        |
@@ -425,33 +682,40 @@ The UI will be fully responsive and optimized for mobile screens (320px–480px)
 
 ---
 
-## 10. Development Plan
+## 11. Development Plan
 
 ### Phase 1 (Mar 4–20): Ideation & Foundation ✅
 - [x] Define persona, scenarios, and workflow
 - [x] Design weekly premium model and parametric triggers
 - [x] Plan AI/ML architecture
+- [x] Design adversarial defense and anti-spoofing strategy
 - [x] Finalize tech stack
-- [ ] Set up GitHub repository with project scaffolding
-- [ ] Initialize React frontend + FastAPI backend boilerplate
-- [ ] Set up PostgreSQL schema (workers, policies, claims, triggers)
-- [ ] Record 2-minute strategy video
+- [x] Set up GitHub repository with project scaffolding
+- [x] Initialize React frontend + FastAPI backend boilerplate
+- [x] Set up PostgreSQL schema (workers, policies, claims, triggers, device_fingerprints, gps_pings)
+- [x] Record 2-minute strategy video
 
 ### Phase 2 (Mar 21–Apr 4): Automation & Protection
 - [ ] Worker registration and onboarding flow
 - [ ] Policy creation with dynamic weekly premium calculation (ML model v1)
 - [ ] Implement 5 parametric trigger monitors (weather, AQI, curfew, heat, outage)
 - [ ] Basic fraud detection layer (rule-based + Isolation Forest)
+- [ ] GPS trajectory analysis pipeline (PostGIS)
+- [ ] Cell tower cross-check integration (Android Network Location API)
+- [ ] Tiered payout system (auto-approve / partial-pay / hold)
+- [ ] Worker-facing flagged claim notifications (plain language, multilingual)
 - [ ] Zero-touch claim initiation pipeline
 - [ ] Mock payout integration (Razorpay sandbox)
 - [ ] Record 2-minute demo video
 
 ### Phase 3 (Apr 5–17): Scale & Optimise
-- [ ] Advanced fraud detection (GPS spoofing, historical pattern analysis)
-- [ ] Worker dashboard (earnings protected, active coverage, payout history)
-- [ ] Admin/insurer dashboard (loss ratios, predictive disruption analytics)
+- [ ] Advanced fraud detection: device-sharing graph, UPI clustering, ring detection engine
+- [ ] Coordinated ring alert system with human review escalation
+- [ ] Repeat false-positive baseline adjustment for legitimate workers
+- [ ] Worker dashboard (earnings protected, active coverage, payout history, flag status)
+- [ ] Admin/insurer dashboard (loss ratios, fraud ring alerts, predictive disruption analytics)
 - [ ] PWA wrapper for mobile-native experience
-- [ ] Full end-to-end demo with simulated disruption event
+- [ ] Full end-to-end demo with simulated disruption event + simulated fraud ring attempt
 - [ ] Final pitch deck (PDF)
 - [ ] Record 5-minute walkthrough demo video
 
@@ -463,7 +727,7 @@ The UI will be fully responsive and optimized for mobile screens (320px–480px)
 |-------------------------|-----------------------------------------------------|
 | Frontend Developer      | React UI, worker dashboard, onboarding flow         |
 | Backend Developer       | FastAPI, database, trigger monitoring pipelines      |
-| ML Engineer             | Premium model, fraud detection, risk scoring         |
+| ML Engineer             | Premium model, fraud detection, anti-spoofing models |
 | Full-Stack / DevOps     | Integration, deployment, demo setup                  |
 
 ---
