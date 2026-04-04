@@ -1,0 +1,6 @@
+{
+  "AUTO_APPROVE_NOTIFICATION": "Great news! \u20b9{amount} is on its way to your UPI.\nDisruption: {disruption_event} | Zone: {zone_name} | Date: {date}\nExpected arrival: within 15 minutes.",
+  "SOFT_FLAG_NOTIFICATION": "Your payout for {disruption_event} on {date} is being processed.\n\u20b9{first_amount} has been sent to your UPI now.\nThe remaining \u20b9{held_amount} will be released within 24 hours.\nReason for delay: {reason_text}\nNo action needed from you \u2014 this resolves automatically.",
+  "HARD_HOLD_NOTIFICATION": "Your payout for {disruption_event} on {date} is under review.\nReason: {reason_text}\nTap below to confirm you were working in {zone_name} on {date}.\n[YES, I was working] [NO, I was not]\nOptional note (100 chars max): ___________\nYou will hear back within 48 hours.",
+  "PREMIUM_RENEWAL_NOTIFICATION": "Your Allievo coverage renews on Monday.\nNext week's premium: \u20b9{premium}\nCoverage: {tier} \u2014 up to \u20b9{max_payout}/week\n{premium_reason}\n[Keep my coverage] [Change tier] [Skip this week]\nDeciding by Monday 11:59 PM keeps you covered."
+}
