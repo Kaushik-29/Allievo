@@ -32,7 +32,7 @@ India's food delivery partners — working for Zomato and Swiggy — earn betwee
 - Curfews, bandhs, or sudden zone closures (inability to access pickup/drop areas)
 - Platform-side outages during peak hours (app downtime blocking order acceptance)
 
-Currently, gig workers have zero income protection against these events. They bear 100% of the financial loss. Allievo changes that.
+Currently, gig workers have zero income protection against these events. They bear 100% of the financial loss. Allievo changes that
 
 ---
 
